@@ -240,6 +240,8 @@ You must call the assigned model through Bash. Do not use your default model for
 
 Extract the model name after `ollama-cloud/`. If the name already contains a `:` (e.g. `ministral-3:3b`), use it as-is. Otherwise append `:cloud` (e.g. `deepseek-v4-flash` becomes `deepseek-v4-flash:cloud`).
 
+The Perl `alarm` call below works cross-platform (Linux + macOS) with no extra dependencies. Pass the prompt through the environment so quotes and apostrophes cannot break the command.
+
 ```bash
 RAW_MODEL="deepseek-v4-flash"
 if echo "$RAW_MODEL" | grep -q ':'; then
@@ -247,43 +249,72 @@ if echo "$RAW_MODEL" | grep -q ':'; then
 else
   MODEL="${RAW_MODEL}:cloud"
 fi
-PROMPT="Your system instruction here. Task: your task description here."
-perl -e 'alarm 120; exec "ollama","run","'$MODEL'","'$PROMPT'"' 2>&1 | perl -pe 's/\e\[[0-9;?]*[a-zA-Z]//g' | tr -d '\r'
+export MODEL
+export PROMPT="Your system instruction here. Task: your task description here."
+
+# Linux
+perl -e 'alarm 120; exec "ollama","run",$ENV{MODEL},$ENV{PROMPT}' 2>&1 | perl -pe 's/\e\[[0-9;?]*[a-zA-Z]//g' | tr -d '\r'
+
+# macOS (if you installed coreutils)
+# gtimeout 120 ollama run "$MODEL" "$PROMPT" 2>&1 | perl -pe 's/\e\[[0-9;?]*[a-zA-Z]//g' | tr -d '\r'
 ```
 
-### For deepseek models
+### For API-based providers (deepseek / zai-coding-plan / opencode-go)
 
-Extract the model name after `deepseek/`.
+**Do NOT pass API keys on the command line** — they show up in `ps`, process logs, and shell history. Use a temporary header file and a Python-generated JSON payload.
+
+Read the key safely from `~/.kimi-code/config.toml` with a TOML parser (`tomllib` on Python 3.11+; otherwise install `tomli`).
+
+#### deepseek example
 
 ```bash
-API_KEY=$(grep -A1 '\[providers.deepseek\]' ~/.kimi-code/config.toml | grep 'api_key' | sed 's/.*= *"\(.*\)".*/\1/')
 MODEL="deepseek-chat"
-perl -e 'alarm 60; exec "curl","-s","-X","POST","https://api.deepseek.com/chat/completions","-H","Authorization: Bearer '"$API_KEY"'","-H","Content-Type: application/json","-d","{\"model\":\"'$MODEL'\",\"messages\":[{\"role\":\"system\",\"content\":\"Your system instruction\"},{\"role\":\"user\",\"content\":\"Your task description\"}],\"max_tokens\":2048}"' 2>&1 | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'])"
+PROMPT="Your system instruction. Task: your task description."
+
+# Read API key safely (config path is hard-coded inside the here-doc)
+API_KEY=$(python3 - <<'PY'
+import os, tomllib
+path = os.path.expanduser("~/.kimi-code/config.toml")
+cfg = tomllib.load(open(path, "rb"))
+print(cfg.get("providers", {}).get("deepseek", {}).get("api_key", ""))
+PY
+)
+
+# Create temporary header file so the key never appears on a curl command line
+HEADER_FILE=$(mktemp)
+printf 'Authorization: Bearer %s\n' "$API_KEY" > "$HEADER_FILE"
+
+# Generate JSON payload safely
+PAYLOAD_FILE=$(mktemp)
+python3 - "$MODEL" "$PROMPT" <<'PY' > "$PAYLOAD_FILE"
+import sys, json
+model, prompt = sys.argv[1], sys.argv[2]
+json.dump({
+  "model": model,
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": prompt}
+  ],
+  "max_tokens": 2048
+}, sys.stdout)
+PY
+
+# Call API
+curl -s -X POST "https://api.deepseek.com/chat/completions" \
+  --header "@$HEADER_FILE" \
+  --header "Content-Type: application/json" \
+  --data-binary "@$PAYLOAD_FILE" \
+  --max-time 60 | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'])"
+
+# Clean up
+rm -f "$HEADER_FILE" "$PAYLOAD_FILE"
 ```
 
-### For zai-coding-plan models
-
-Extract the model name after `zai-coding-plan/`.
-
-```bash
-API_KEY=$(grep -A1 '\[providers.zai-coding-plan\]' ~/.kimi-code/config.toml | grep 'api_key' | sed 's/.*= *"\(.*\)".*/\1/')
-MODEL="glm-5.2"
-perl -e 'alarm 60; exec "curl","-s","-X","POST","https://api.z.ai/api/coding/paas/v4/chat/completions","-H","Authorization: Bearer '"$API_KEY"'","-H","Content-Type: application/json","-d","{\"model\":\"'$MODEL'\",\"messages\":[{\"role\":\"system\",\"content\":\"Your system instruction\"},{\"role\":\"user\",\"content\":\"Your task description\"}],\"max_tokens\":2048}"' 2>&1 | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'])"
-```
-
-### For opencode-go models
-
-Extract the model name after `opencode-go/`.
-
-```bash
-API_KEY=$(grep -A1 '\[providers.opencode-go\]' ~/.kimi-code/config.toml | grep 'api_key' | sed 's/.*= *"\(.*\)".*/\1/')
-MODEL="deepseek-v4-flash"
-perl -e 'alarm 60; exec "curl","-s","-X","POST","https://opencode.ai/zen/go/v1/chat/completions","-H","Authorization: Bearer '"$API_KEY"'","-H","Content-Type: application/json","-d","{\"model\":\"'$MODEL'\",\"messages\":[{\"role\":\"system\",\"content\":\"Your system instruction\"},{\"role\":\"user\",\"content\":\"Your task description\"}],\"max_tokens\":2048}"' 2>&1 | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'])"
-```
+Adapt the URL and provider section (`providers.deepseek`, `providers.zai-coding-plan`, `providers.opencode-go`) for the other two providers.
 
 ### For kimi-code models
 
-These use the managed Kimi provider. If the current session already runs on a kimi-code model, you may use your own reasoning. Otherwise, treat it as a standard Kimi API call if credentials are available.
+These use the managed Kimi provider. If the current session already runs on a kimi-code model, you may use your own reasoning. Otherwise, treat it as a standard Kimi API call if credentials are available, using the same header-file pattern as above.
 
 ### If the model call fails
 

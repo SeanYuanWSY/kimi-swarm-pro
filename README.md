@@ -18,10 +18,14 @@ Every time you start a task, pick which models to use and what role each plays â
 
 ## Requirements
 
-- [Kimi Code CLI](https://github.com/anthropics/kimi-code) 0.20+
+- `git` (to clone this repository)
+- [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code) 0.20+
 - At least 2 models configured in `~/.kimi-code/config.toml`
+- `node` â‰¥ 18 (for the hook) and `python3` (for safe `config.toml` editing) in PATH
 
 ## Quick Start
+
+> **Safety note:** `install.sh` writes files into `~/.kimi-code` and `~/.agents`. It backs up `config.toml` before editing, but you should still review the script before running it.
 
 ```bash
 git clone https://github.com/SeanYuanWSY/kimi-swarm.git
@@ -52,19 +56,24 @@ If you prefer to understand each step:
 mkdir -p ~/.agents/skills/kimi-swarm
 cp skills/kimi-swarm/SKILL.md ~/.agents/skills/kimi-swarm/SKILL.md
 
-# 2. Create symlink for Kimi Code to load the skill
+# 2. Create parent directory and symlink for Kimi Code to load the skill
+mkdir -p ~/.kimi-code/skills-curated
 ln -s ~/.agents/skills/kimi-swarm ~/.kimi-code/skills-curated/kimi-swarm
 
 # 3. Install the hook script
+mkdir -p ~/.kimi-code/scripts
 cp hooks/swarm-hook.js ~/.kimi-code/scripts/swarm-hook.js
 chmod +x ~/.kimi-code/scripts/swarm-hook.js
 
 # 4. Register the hook in config.toml
-# Add this block to ~/.kimi-code/config.toml:
-# [[hooks]]
-# event = "UserPromptSubmit"
-# command = "node ~/.kimi-code/scripts/swarm-hook.js"
-# timeout = 5
+# Add this block to ~/.kimi-code/config.toml.
+# The marker comment is required for uninstall.sh to find and remove it.
+# Replace /home/yourname with the output of `echo $HOME`:
+# kimi-swarm-hook
+[[hooks]]
+event = "UserPromptSubmit"
+command = "node $HOME/.kimi-code/scripts/swarm-hook.js"
+timeout = 5
 ```
 
 ## Usage

@@ -1,0 +1,25 @@
+# Editor / OS
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Secrets (should never be committed)
+.env
+.env.*
+*.key
+*.pem
+
+# Logs
+*.log
+
+# Installer backups
+*.bak
+*.kimi-swarm.bak.*
+
+# Test artifacts
+test-output/
+coverage/

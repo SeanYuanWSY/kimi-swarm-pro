@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 SeanYuanWSY
 set -euo pipefail
 
 # kimi-swarm installer — idempotent, safe to run multiple times
@@ -6,7 +8,7 @@ set -euo pipefail
 
 KIMI_DIR="$HOME/.kimi-code"
 AGENTS_DIR="$HOME/.agents/skills"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Colors
 GREEN='\033[0;32m'
@@ -14,9 +16,9 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-info()  { echo -e "${GREEN}[✓]${NC} $1"; }
-warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
-error() { echo -e "${RED}[✗]${NC} $1"; }
+info()  { echo -e "${GREEN}[✓]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
+error() { echo -e "${RED}[✗]${NC} $*"; }
 
 echo "=== kimi-swarm installer ==="
 echo ""
@@ -24,8 +26,18 @@ echo ""
 # Step 0: Check Kimi Code is installed
 if [ ! -d "$KIMI_DIR" ]; then
   error "Kimi Code directory not found at $KIMI_DIR"
-  error "Please install Kimi Code CLI first: https://github.com/anthropics/kimi-code"
+  error "Please install Kimi Code CLI first: https://github.com/MoonshotAI/kimi-code"
   exit 1
+fi
+
+# Step 0.5: Check runtime dependencies
+if ! command -v node >/dev/null 2>&1; then
+  error "node is required for swarm-hook.js but not found in PATH"
+  exit 1
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  warn "python3 not found in PATH; uninstall.sh will not be able to edit config.toml"
 fi
 
 # Step 1: Create skill directory
@@ -38,16 +50,18 @@ fi
 cp "$SCRIPT_DIR/skills/kimi-swarm/SKILL.md" "$AGENTS_DIR/kimi-swarm/SKILL.md"
 info "Installed SKILL.md → $AGENTS_DIR/kimi-swarm/SKILL.md"
 
-# Step 3: Create symlink in skills-curated
+# Step 3: Create parent directory and symlink in skills-curated
+mkdir -p "$KIMI_DIR/skills-curated"
 SYMLINK="$KIMI_DIR/skills-curated/kimi-swarm"
 if [ -L "$SYMLINK" ]; then
   warn "Symlink already exists at $SYMLINK, recreating"
   rm "$SYMLINK"
 elif [ -e "$SYMLINK" ]; then
-  warn "Non-symlink file exists at $SYMLINK, replacing"
-  rm -rf "$SYMLINK"
+  error "Non-symlink file or directory already exists at $SYMLINK"
+  error "Please remove it manually, then re-run install.sh"
+  exit 1
 fi
-ln -s "$AGENTS_DIR/kimi-swarm" "$SYMLINK"
+ln -sfn "$AGENTS_DIR/kimi-swarm" "$SYMLINK"
 info "Created symlink → $SYMLINK → $AGENTS_DIR/kimi-swarm"
 
 # Step 4: Create scripts directory if needed
@@ -61,22 +75,34 @@ cp "$SCRIPT_DIR/hooks/swarm-hook.js" "$KIMI_DIR/scripts/swarm-hook.js"
 chmod +x "$KIMI_DIR/scripts/swarm-hook.js"
 info "Installed hook → $KIMI_DIR/scripts/swarm-hook.js"
 
-# Step 6: Register hook in config.toml (idempotent)
+# Step 6: Register hook in config.toml (idempotent + backup on mutation only)
 CONFIG="$KIMI_DIR/config.toml"
 if [ ! -f "$CONFIG" ]; then
   warn "config.toml not found, creating one"
   touch "$CONFIG"
+  chmod 600 "$CONFIG"
 fi
 
-if grep -q "swarm-hook.js" "$CONFIG" 2>/dev/null; then
+MARKER="# kimi-swarm-hook"
+if grep -qF "$MARKER" "$CONFIG" 2>/dev/null; then
   warn "Hook already registered in config.toml, skipping"
 else
-  # Append the hook block
-  echo "" >> "$CONFIG"
-  echo "[[hooks]]" >> "$CONFIG"
-  echo 'event = "UserPromptSubmit"' >> "$CONFIG"
-  echo 'command = "node ~/.kimi-code/scripts/swarm-hook.js"' >> "$CONFIG"
-  echo 'timeout = 5' >> "$CONFIG"
+  # Backup config only when we are about to modify it
+  if [ -s "$CONFIG" ]; then
+    BACKUP="$CONFIG.kimi-swarm.bak.$(date +%s)"
+    cp "$CONFIG" "$BACKUP"
+    info "Backed up config.toml → $BACKUP"
+  fi
+
+  # Use marker for idempotency; quote the path in case HOME contains spaces
+  {
+    echo ""
+    echo "$MARKER"
+    echo "[[hooks]]"
+    echo 'event = "UserPromptSubmit"'
+    echo "command = \"node '$KIMI_DIR/scripts/swarm-hook.js'\""
+    echo 'timeout = 5'
+  } >> "$CONFIG"
   info "Registered hook in config.toml"
 fi
 

@@ -1,0 +1,19 @@
+{
+  "name": "kimi-swarm",
+  "version": "0.1.2",
+  "description": "Interactive multi-model swarm for Kimi Code CLI",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SeanYuanWSY/kimi-swarm.git"
+  },
+  "author": "SeanYuanWSY",
+  "keywords": ["kimi-code", "swarm", "multi-model", "cli", "skill"],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "lint:sh": "shellcheck install.sh uninstall.sh",
+    "lint:js": "eslint hooks/swarm-hook.js || true"
+  }
+}

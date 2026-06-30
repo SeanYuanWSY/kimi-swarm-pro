@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 SeanYuanWSY
 "use strict";
 
 /**
@@ -15,23 +17,26 @@
  * Registered in ~/.kimi-code/config.toml under [[hooks]].
  */
 
-const fs = require("node:fs");
-const path = require("node:path");
+const fs = require("fs");
 
 // --- Trigger detection ---
 
 /** Detect /swarm command */
 function isSwarmCommand(prompt) {
-  return /^\s*\/swarm\b/i.test(prompt);
+  return /^\s*\/swarm\b/iu.test(prompt);
 }
 
 /** Detect multi-role language patterns that suggest the user wants multi-model collaboration */
 function isMultiRolePrompt(prompt) {
-  const patterns = [
-    /前端模型|后端模型|审查模型|安全模型|性能模型|审美模型|研究模型|cheap.?task.*model|frontend.*model|backend.*model|review.*model/i,
-    /模型负责|model.*负责|model.*for.*(frontend|backend|review|research)/i,
-  ];
-  return patterns.some((p) => p.test(prompt));
+  // CJK patterns: do NOT use \b because word boundaries are undefined around CJK characters.
+  const cjkRoles = /(前端模型|后端模型|审查模型|安全模型|性能模型|审美模型|研究模型)/iu;
+  const cjkAssign = /模型负责/iu;
+
+  // ASCII patterns: word boundaries are safe here.
+  const engRoles = /\b(cheap[\s\-_]?task|frontend|backend|review|research)\s+model(s)?\b/iu;
+  const engAssign = /\bmodel(s)?\s+for\s+(frontend|backend|review|research)\b/iu;
+
+  return cjkRoles.test(prompt) || cjkAssign.test(prompt) || engRoles.test(prompt) || engAssign.test(prompt);
 }
 
 /** Detect if swarm mode system instruction is present (heuristic: the prompt mentions roles AND multiple perspectives) */
@@ -45,7 +50,8 @@ function readPayload() {
   try {
     const raw = fs.readFileSync(0, "utf8");
     return raw.trim() ? JSON.parse(raw) : {};
-  } catch {
+  } catch (err) {
+    console.error("swarm-hook.js: parse error:", err.message);
     return {};
   }
 }

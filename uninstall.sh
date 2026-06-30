@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 SeanYuanWSY
 set -euo pipefail
 
 # kimi-swarm uninstaller
@@ -14,27 +16,44 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-info()  { echo -e "${GREEN}[✓]${NC} $1"; }
-warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
-error() { echo -e "${RED}[✗]${NC} $1"; }
+info()  { echo -e "${GREEN}[✓]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
+error() { echo -e "${RED}[✗]${NC} $*"; }
 
 echo "=== kimi-swarm uninstaller ==="
 echo ""
 
+# Check python3 dependency
+if ! command -v python3 >/dev/null 2>&1; then
+  error "python3 is required to safely edit config.toml but not found in PATH"
+  exit 1
+fi
+
 # Step 1: Remove symlink
 SYMLINK="$KIMI_DIR/skills-curated/kimi-swarm"
-if [ -L "$SYMLINK" ] || [ -e "$SYMLINK" ]; then
-  rm -rf "$SYMLINK"
+if [ -L "$SYMLINK" ]; then
+  rm "$SYMLINK"
   info "Removed symlink: $SYMLINK"
+elif [ -e "$SYMLINK" ]; then
+  error "Refusing to remove non-symlink path: $SYMLINK"
+  error "Please remove it manually if you are sure."
+  exit 1
 else
   warn "Symlink not found: $SYMLINK"
 fi
 
 # Step 2: Remove skill directory
 SKILL_DIR="$AGENTS_DIR/kimi-swarm"
-if [ -d "$SKILL_DIR" ]; then
+if [ -L "$SKILL_DIR" ]; then
+  # It is a symlink; remove only the link, not the target
+  rm "$SKILL_DIR"
+  info "Removed symlink: $SKILL_DIR"
+elif [ -d "$SKILL_DIR" ] && [ ! -L "$SKILL_DIR" ]; then
   rm -rf "$SKILL_DIR"
   info "Removed skill directory: $SKILL_DIR"
+elif [ -e "$SKILL_DIR" ]; then
+  error "Refusing to remove non-directory path: $SKILL_DIR"
+  exit 1
 else
   warn "Skill directory not found: $SKILL_DIR"
 fi
@@ -50,21 +69,64 @@ fi
 
 # Step 4: Remove hook registration from config.toml
 if [ -f "$CONFIG" ]; then
-  if grep -q "swarm-hook.js" "$CONFIG" 2>/dev/null; then
-    # Use python to safely remove the [[hooks]] block containing swarm-hook.js
+  if grep -qF "# kimi-swarm-hook" "$CONFIG" 2>/dev/null; then
+    # Backup config before mutation
+    BACKUP="$CONFIG.kimi-swarm.bak.$(date +%s)"
+    cp "$CONFIG" "$BACKUP"
+    info "Backed up config.toml → $BACKUP"
+
+    # Use a state-machine Python script to safely remove the [[hooks]] block
+    # Match by the marker line and command field, not by substring on any line
     python3 - "$CONFIG" <<'PYEOF'
 import sys, re
 
 config_path = sys.argv[1]
 with open(config_path, 'r') as f:
-    content = f.read()
+    lines = f.readlines()
 
-# Remove [[hooks]] blocks that contain "swarm-hook.js"
-# Each block starts with [[hooks]] and ends before the next [[...]] or [section] or EOF
-pattern = r'(\[\[hooks\]\]\s*\n(?:(?!\[\[|\[).+\n)*?swarm-hook\.js[^\n]*\n(?:(?!\[\[|\[).+\n)*?)'
-content = re.sub(pattern, '', content)
+# Match the marker comment line that install.sh writes
+marker_re = re.compile(r'^#\s*kimi-swarm-hook\s*$', re.IGNORECASE)
+hook_start = re.compile(r'^\[\[hooks\]\]\s*(?:#.*)?$')
+command_re = re.compile(r'^\s*command\s*=\s*["\'].*swarm-hook\.js.*["\']\s*$')
 
-# Clean up any resulting double blank lines
+out, buf = [], []
+in_hook = False
+discard = False
+skip_marker = False
+
+for line in lines:
+    stripped = line.strip()
+    if marker_re.match(stripped):
+        # Skip the marker line; it belongs to the kimi-swarm hook block
+        skip_marker = True
+        continue
+    if skip_marker and hook_start.match(stripped):
+        # This is the hook block that follows the marker
+        skip_marker = False
+        if in_hook and not discard:
+            out.extend(buf)
+        buf = [line]
+        in_hook = True
+        discard = False
+        continue
+    skip_marker = False
+    if in_hook:
+        if stripped.startswith('[') and not hook_start.match(stripped):
+            if not discard:
+                out.extend(buf)
+            buf, in_hook = [], False
+            out.append(line)
+            continue
+        buf.append(line)
+        if command_re.match(stripped):
+            discard = True
+        continue
+    out.append(line)
+
+if in_hook and not discard:
+    out.extend(buf)
+
+content = ''.join(out)
 content = re.sub(r'\n{3,}', '\n\n', content)
 
 with open(config_path, 'w') as f:
