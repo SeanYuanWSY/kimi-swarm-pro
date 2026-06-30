@@ -133,13 +133,60 @@ Options:
 - "Be concise / save tokens" — for cheaper models
 - The user can also select "Other" and type their own custom instruction.
 
-### Step 5: Build AgentSwarm Items
+### Step 5: Ask About Concurrency Limits (Optional but Important)
+
+Some providers (especially Ollama Cloud) have concurrent request limits tied to the subscription tier. If the user selects more models from one provider than the provider allows simultaneously, only a subset will actually run while the rest queue — wasting time.
+
+**Ask the user via AskUserQuestion:**
+
+> "是否需要为某些 provider 设置最大并发数？（例如 Ollama Cloud 订阅可能限制 3 个并发）"
+
+Options:
+- "不设置，全部并行" (Recommended) — all subagents launch at once
+- "设置并发限制" — user will specify per-provider limits
+- The user can select "Other" to type a custom answer.
+
+**If the user chooses to set limits**, for each provider that has selected models, ask:
+
+> "[provider] 的最大并发数是多少？（当前选了 N 个该 provider 的模型）"
+
+Options:
+- "1（串行）"
+- "2"
+- "3"
+- The user can select "Other" to type a custom number.
+
+**Record the limits** as a mapping:
+```
+ollama-cloud → 3
+deepseek → 5  (or unlimited)
+kimi-code → unlimited
+```
+
+### Step 6: Build AgentSwarm Items (with batching if needed)
 
 Create one item per selected model in this format:
 
 ```
 "{model_id}|{role}|{custom_instruction_or_default}|{task_description}"
 ```
+
+**If no concurrency limits were set**, pass all items to AgentSwarm at once.
+
+**If concurrency limits were set**, split items into batches:
+
+1. Group items by provider.
+2. For each provider, split its items into batches of `max_concurrency` size.
+3. Launch AgentSwarm with batch 1 from each provider (interleaved so all providers start working immediately).
+4. When batch 1 completes, launch batch 2, and so on.
+5. Collect all outputs across all batches for final synthesis.
+
+**Batching example:**
+- User selected 5 ollama-cloud models + 2 deepseek models
+- ollama-cloud concurrency = 3, deepseek = unlimited
+- Batch 1: 3 ollama-cloud items + 2 deepseek items (5 parallel)
+- Batch 2: 2 ollama-cloud items (2 parallel)
+- Total: 2 sequential waves instead of 5 parallel + 3 queued
 
 Example items:
 
@@ -150,16 +197,16 @@ Example items:
 "ollama-cloud/minimax-m3|review|Critically review the frontend and backend proposals|Review the login page design"
 ```
 
-### Step 6: Run AgentSwarm
+### Step 7: Run AgentSwarm
 
 Call `AgentSwarm` with:
 
 - `description`: short task name
 - `subagent_type`: "coder"
 - `prompt_template`: the template below
-- `items`: the array built in Step 5
+- `items`: the array built in Step 6 (or the current batch if batching)
 
-### Step 7: Synthesize
+### Step 8: Synthesize
 
 After all subagents return, produce a final response that:
 

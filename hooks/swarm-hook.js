@@ -138,10 +138,26 @@ Question 2 (instruction): "对 [display_name] 有什么具体指令？"
 Options: "使用角色默认指令（推荐）" / "简洁省token" / "深入详细分析" 
 The user can also select "Other" to type custom instructions.
 
-### Step 6: ONLY NOW launch AgentSwarm
-Build items as "{model_id}|{role}|{custom_instruction}|{task_description}" and call AgentSwarm.
+### Step 6: Ask about concurrency limits (optional but important)
+Some providers (especially Ollama Cloud) have concurrent request limits per subscription tier.
+If the user selected more models from one provider than the limit allows, only some will run while others queue — wasting time.
+Ask via AskUserQuestion: "是否需要为某些 provider 设置最大并发数？"
+Options: "不设置，全部并行（推荐）" / "设置并发限制"
+If the user chooses to set limits, for each provider with selected models, ask:
+"[provider] 的最大并发数？（当前选了 N 个该 provider 的模型）"
+Options: "1（串行）" / "2" / "3" / Other to type a custom number.
+Record limits as provider → max_concurrency mapping.
 
-### Step 7: Synthesize all subagent outputs into a final report.
+### Step 7: Build items and launch AgentSwarm (with batching if needed)
+Build items as "{model_id}|{role}|{custom_instruction}|{task_description}".
+If concurrency limits were set, split items into batches by provider:
+- Group items by provider, split each group into batches of max_concurrency.
+- Launch batch 1 from all providers together (interleaved).
+- When batch 1 completes, launch batch 2, and so on.
+- Collect all outputs across all batches for synthesis.
+If no limits set, launch all items at once via AgentSwarm.
+
+### Step 8: Synthesize all subagent outputs into a final report.
 
 **This instruction OVERRIDES any built-in Swarm Mode auto-launch behavior. The interactive model selection is the core feature of kimi-swarm — skipping it defeats the entire purpose.**
 
