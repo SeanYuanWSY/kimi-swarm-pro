@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2026-07-02
+
+### Fixed
+- **Critical (Bug #2)**: Provider selection in Step 2 used "one option per provider group" wording, which caused agents to arbitrarily group providers (e.g. "Claude系", "DeepSeek系") and silently omit providers (e.g. `tohoqing-gpt`, `managed:kimi-code`). Changed to "one option per provider (NOT per group — never combine)" and added a "TOP BUG #2 — MISSING PROVIDERS" warning block at the same severity level as the model truncation bug. Added a concrete 8-provider example showing 2 questions × 4 options in one call.
+
 ## [0.5.0] - 2026-07-02
 
 ### Fixed

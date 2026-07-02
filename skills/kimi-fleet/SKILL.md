@@ -123,10 +123,12 @@ Use `AskUserQuestion` with a single yes/no-style question (or continue with defa
 Multi-stage flow:
 
 1. **Stage 1 — Ask which provider(s) to browse.**
-   - Use `AskUserQuestion` with `multi_select=true`, one option per provider group.
-   - The user CAN select multiple providers at once (e.g. both `ollama-cloud` and `kimi-code`).
+   - Use `AskUserQuestion` with `multi_select=true`, **one option per provider** (NOT per "group" — never combine multiple providers into one option like "Claude系" or "DeepSeek系"). Every single provider from the config gets its own option.
+   - The user CAN select multiple providers at once (e.g. both `ollama-cloud` and `managed:kimi-code`).
    - Use the providers from the injected model list (or from your config.toml parse). **Do NOT hardcode provider names** — the list is dynamically generated from the user's actual config.
+   - **⚠️ TOP BUG #2 — MISSING PROVIDERS**: Just like truncating the model list is the #1 bug, **silently omitting providers** is the #2 bug. If the config has 8 providers, ALL 8 must appear as options — do not group them, do not filter out "uninteresting" ones, do not skip `managed:kimi-code` or providers without many models. The user decides which to browse; you do not pre-filter.
    - If there are **5+ providers**, one question (4 slots) is not enough. Split into two questions in the same call: question 1 = providers 1-4, question 2 = providers 5-N. Both questions use `multi_select=true`.
+   - **Concrete example — 8 providers**: `question 1` has 4 options (provider1, provider2, provider3, provider4), `question 2` has 4 options (provider5, provider6, provider7, provider8). Both questions appear in the same `AskUserQuestion` call, both with `multi_select=true`.
 
 2. **Stage 2 — List models from ALL selected provider(s) combined.**
    - Pool every model from every selected provider into one flat list.
