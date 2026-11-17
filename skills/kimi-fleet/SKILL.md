@@ -272,7 +272,7 @@ Some providers (especially Ollama Cloud) have concurrent request limits tied to 
 > "是否需要为某些 provider 设置最大并发数？（例如 Ollama Cloud 订阅可能限制 3 个并发）"
 
 Options:
-- "不设置，全部并行" (Recommended) — all subagents launch at once
+- "不设置，全部并行" (Recommended) — all ready (dependency-free) subagents launch at once
 - "设置并发限制" — user will specify per-provider limits
 - The user can select "Other" to type a custom answer.
 
@@ -293,9 +293,9 @@ deepseek → 5  (or unlimited)
 managed:kimi-code → unlimited
 ```
 
-#### Step 6: Build AgentSwarm Items (with batching if needed)
+#### Step 6: Build AgentSwarm Items (dependency stages first, then provider batching)
 
-Create one item per selected model. **Do NOT use any delimiter-separated format.** Instead, render the assignment as a plain readable sentence so the subagent can read it directly without parsing:
+Create items only for the stage currently ready to launch — one item per selected model in that stage; build dependent items later, once the upstream results they embed have returned. **Do NOT use any delimiter-separated format.** Instead, render the assignment as a plain readable sentence so the subagent can read it directly without parsing:
 
 ```
 "Your model is {model_id}. Your role is {role}. Your instruction is: {custom_instruction_or_default}. Your task is: {task_description}."
@@ -303,32 +303,49 @@ Create one item per selected model. **Do NOT use any delimiter-separated format.
 
 **The instruction (`custom_instruction_or_default`) must contain the full system prompt text, not just the role name.** If the user chose "使用角色默认指令", copy the corresponding text from the [Role System Prompts](#role-system-prompts) section below (e.g. the `frontend` default prompt). If the user provided a custom instruction, use that text verbatim.
 
-**If no concurrency limits were set**, pass all items to AgentSwarm at once.
+**Stage the items by real data dependency first — before any provider batching.**
 
-**If concurrency limits were set**, split items into batches:
+- An item belongs to a later stage when its task needs another item's output — e.g. `review` critiquing produced designs, `synthesize` combining results, or any task phrased as "use X's output". Everything else is a ready, independent item.
+- **Only ready, independent items may share one AgentSwarm call.** A dependency is a hard ordering barrier: never launch a dependent item until every upstream item it needs has actually returned.
+- **No concurrency limit set ≠ dependencies can run in parallel.** "不设置，全部并行" means all *independent ready* items launch at once; dependent items still wait for their upstream results.
+- **Provider concurrency limits apply within each stage.** They batch that stage's ready items; they never pull a later-stage item forward or merge stages.
 
-1. Group items by provider.
+**For each dependent item** (e.g. `synthesize`, or `review` of earlier outputs):
+
+1. Wait until every upstream item it needs has actually returned its report.
+2. Build the item's task text only then, embedding the complete returned outputs — each labeled with its `model_id` and role. Do not assume shared context or automatic access to sibling outputs — explicitly include every required output in the item text.
+3. If an upstream item failed or returned nothing usable, do NOT claim a complete synthesis or launch the dependent item on empty input. Report the gap to the user and ask whether to accept partial results or drop the dependent item.
+
+**Within one stage, if concurrency limits were set**, split that stage's ready items into batches:
+
+1. Group the stage's items by provider.
 2. For each provider, split its items into batches of `max_concurrency` size.
 3. Launch AgentSwarm with batch 1 from each provider (interleaved so all providers start working immediately).
 4. When batch 1 completes, launch batch 2, and so on.
-5. Collect all outputs across all batches for final synthesis.
+5. Collect all outputs across all batches before building the next stage.
 
-**Batching example:**
+**Batching example (one stage, all items independent):**
 - User selected 5 ollama-cloud models + 2 deepseek models
 - ollama-cloud concurrency = 3, deepseek = unlimited
 - Batch 1: 3 ollama-cloud items + 2 deepseek items (5 parallel)
 - Batch 2: 2 ollama-cloud items (2 parallel)
 - Total: 2 sequential waves instead of 5 parallel + 3 queued
 
-Example items:
+**Example items — one task, two dependency stages:**
+
+Stage 1 (independent — all launch together in one AgentSwarm call):
 
 ```
-"Your model is ollama-cloud/deepseek-v4-flash. Your role is cheap-task. Your instruction is: Summarize concisely with bullet points. Your task is: Explain what a workshop is."
 "Your model is ollama-cloud/glm-5.2. Your role is frontend. Your instruction is: Focus on aesthetics and component structure. Your task is: Design a login page."
 "Your model is deepseek/deepseek-v4-pro. Your role is backend. Your instruction is: Focus on API and database design. Your task is: Design the backend for a login page."
-"Your model is ollama-cloud/minimax-m3. Your role is review. Your instruction is: Critically review the frontend and backend proposals. Your task is: Review the login page design."
-"Your model is ollama-cloud/kimi-k2.7-code. Your role is synthesize. Your instruction is: You are an integration specialist. Your task is: Combine all outputs into a final answer."
 ```
+
+Stage 2 (dependent — the parent constructs each item only after Stage 1 returns, following these rules):
+
+- `review` item: task text embeds the complete returned frontend and backend reports, each labeled with its `model_id` and role.
+- `synthesize` item: task text embeds the complete returned outputs of its actual dependencies — here the frontend and backend reports. If it must also incorporate the `review` report, it belongs to a later stage launched after `review` returns, with that report included as well.
+
+Stage order always follows the real data flow, not a fixed pattern.
 
 #### Step 7: Run AgentSwarm
 
@@ -337,7 +354,9 @@ Call `AgentSwarm` with:
 - `description`: short task name
 - `subagent_type`: "coder"
 - `prompt_template`: the template below
-- `items`: the array built in Step 6 (or the current batch if batching)
+- `items`: the array built in Step 6 (the current stage's batch if batching)
+
+A dependent item's AgentSwarm call happens only in its own stage — after the required upstream items have returned and their outputs have been embedded into the item text. Never fold a dependent item into an earlier wave.
 
 #### Step 8: Synthesize
 
@@ -347,6 +366,8 @@ After all subagents return, produce a final response that:
 2. Summarizes each subagent's key finding.
 3. Highlights agreements and conflicts.
 4. Gives a final recommendation or integrated output.
+
+Before writing it, verify every expected upstream item actually returned a report. If one failed or is missing, say so explicitly and mark the affected conclusions as based on partial results — never present the synthesis as complete coverage. If the gap is material, ask the user whether to accept the partial synthesis rather than deciding silently.
 
 ## Role System Prompts
 

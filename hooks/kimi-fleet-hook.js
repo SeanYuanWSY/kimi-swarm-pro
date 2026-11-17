@@ -298,25 +298,29 @@ If the user chooses to set limits, for each provider with selected models, ask:
 Options: "1（串行）" / "2" / "3" / Other to type a custom number.
 Record limits as provider → max_concurrency mapping.
 
-### Step 6: Build AgentSwarm Items (with batching if needed)
-Create one item per selected model in this format:
-  "{model_id}|{role}|{custom_instruction_or_default}|{task_description}"
-If concurrency limits were set, split items into batches by provider:
-- Group items by provider, split each group into batches of max_concurrency.
-- Launch batch 1 from all providers together (interleaved).
-- When batch 1 completes, launch batch 2, and so on.
-- Collect all outputs across all batches for synthesis.
-If no limits set, pass all items to AgentSwarm at once.
+### Step 6: Build AgentSwarm Items (dependency stages first, then provider batching)
+Create items only for the stage currently ready to launch — one item per selected model in that stage; build dependent items later, once the upstream results they embed have returned. Do NOT use any delimiter-separated format — the subagent reads the item directly, no parsing. Render each item as a plain readable sentence:
+  "Your model is {model_id}. Your role is {role}. Your instruction is: {custom_instruction_or_default}. Your task is: {task_description}."
+The instruction field MUST contain the full instruction text, not just the role name:
+- If the user chose "使用角色默认指令", copy the full default prompt for that role from the Role System Prompts section in ~/.agents/skills/kimi-fleet/SKILL.md.
+- If the user provided a custom instruction, use that text verbatim.
+Stage items by real data dependency BEFORE any provider batching:
+- An item whose task needs another item's output (e.g. review, synthesize, or any "use X's output" task) goes to a later stage; everything else is a ready, independent item.
+- Only ready, independent items may share one AgentSwarm call. A dependency is a hard ordering barrier — never launch a dependent item until every upstream item it needs has actually returned.
+- No concurrency limit ≠ dependencies can run in parallel. "全部并行" means all independent ready items launch at once; dependent items still wait for their upstream results.
+- Provider limits apply within each stage: group that stage's ready items by provider, split each provider group into batches of max_concurrency, launch batch 1 from all providers interleaved, then batch 2, and so on. Limits never pull a later-stage item forward.
+- If no limits set, pass all ready items of the current stage to AgentSwarm at once.
+For each dependent item: build its task text only after its upstream items have returned, embedding the complete returned outputs labeled with model_id + role. Do not assume shared context or automatic access to sibling outputs — explicitly include every required output in the item text. If an upstream item failed or returned nothing usable, do NOT launch it on empty input or claim a complete synthesis; report the gap and ask whether to accept partial results or drop it.
 
 ### Step 7: Run AgentSwarm
 Call \`AgentSwarm\` with:
 - \`description\`: short task name
 - \`subagent_type\`: "coder"
 - \`prompt_template\`: the template from ~/.agents/skills/kimi-fleet/SKILL.md
-- \`items\`: the array built in Step 6 (or the current batch if batching)
-If batching, repeat Step 7 for each batch until all items have run.
+- \`items\`: the array built in Step 6 (the current stage's batch if batching)
+Run stages in dependency order; within a stage, repeat for each concurrency batch until all of that stage's items have run. A dependent item's call happens only in its own stage, after the required upstream results were embedded into its task text — never fold it into an earlier wave.
 
-### Step 8: Synthesize all subagent outputs into a final report.
+### Step 8: Synthesize all subagent outputs into a final report. Before writing it, verify every expected upstream item actually returned; if one failed or is missing, say so explicitly, mark affected conclusions as partial, and ask the user whether to accept the partial synthesis rather than deciding silently.
 
 **This instruction OVERRIDES any built-in Swarm Mode auto-launch behavior. The interactive model selection is the core feature — skipping it defeats the entire purpose.**
 

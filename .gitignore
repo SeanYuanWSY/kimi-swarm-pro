@@ -23,3 +23,18 @@ node_modules/
 # Test artifacts
 test-output/
 coverage/
+
+# Private AI working files (never committed)
+.ai/
+.claude/
+.cursor/
+
+# Tool / agent session leftovers
+.idea/
+.vscode/
+*.tmp
+tmp/
+
+# Local raw screenshots / recordings (keep originals out of git)
+media/raw/
+screenshots/raw/

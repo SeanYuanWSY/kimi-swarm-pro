@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Reorganize the README around setup, mode selection, examples, and installation side effects.
+- Add an original logo, a two-mode overview image, and a real frame from the archived demonstration video; artwork now uses a modern dark node-graph/graph-routing style, and the demo frame is labeled as a static screenshot preview rather than a playable video.
+- Keep private AI plans, session files, and raw recordings outside the public source tree.
+- Document contribution boundaries for humans and AI assistants, plus synchronized release version files.
+- Use the existing Node syntax check for `npm run lint:js` and preserve its failure status.
+- Update the security policy version table and private reporting guidance.
+
+### Fixed
+- Align the hook and walkthroughs with the skill's plain-text task assignments instead of the obsolete pipe-separated format.
+- Describe provider concurrency as task batching rather than an undocumented `AgentSwarm` argument.
+- Split both examples into staged `AgentSwarm` calls: independent research/design items run first in parallel, then the synthesis/review item is created with the complete returned outputs embedded and labeled by topic and source model, instead of launching the dependent item in the same batch with nothing to read; also state that upstream gaps are reported to the user, not papered over.
+
 ## [0.7.0] - 2026-07-03
 
 ### Security

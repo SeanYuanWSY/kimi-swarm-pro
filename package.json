@@ -14,6 +14,6 @@
   },
   "scripts": {
     "lint:sh": "shellcheck install.sh uninstall.sh",
-    "lint:js": "eslint hooks/kimi-fleet-hook.js || true"
+    "lint:js": "node --check hooks/kimi-fleet-hook.js"
   }
 }
