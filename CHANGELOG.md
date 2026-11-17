@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Reorganize the README around setup, mode selection, examples, and installation side effects.
-- Add an original logo, a two-mode overview image, and a real frame from the archived demonstration video; artwork now uses a modern dark node-graph/graph-routing style, and the demo frame is labeled as a static screenshot preview rather than a playable video.
+- Add an original logo and modern dark node-graph overview artwork, and embed the full archived Fleet demo as a native GitHub video attachment instead of a static preview.
 - Keep private AI plans, session files, and raw recordings outside the public source tree.
 - Document contribution boundaries for humans and AI assistants, plus synchronized release version files.
 - Use the existing Node syntax check for `npm run lint:js` and preserve its failure status.

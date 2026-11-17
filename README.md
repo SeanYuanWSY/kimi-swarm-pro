@@ -22,11 +22,11 @@
 
 A natural-language multi-role prompt (e.g. `前端模型负责UI，后端模型负责API`) also triggers the `/fleet` flow without the slash command — see [How the Hook Works](#how-the-hook-works).
 
-## Demo Preview
+## Demo
 
-![Static preview — demo screenshot from the 105-second Fleet demonstration, showing the generated 3D todo app](docs/assets/demo-preview.jpg)
+https://github.com/user-attachments/assets/61a58696-9cf0-4a22-a7c2-1f12eae1df9b
 
-*Static preview — one frame from the 105-second Fleet demo; the generated 3D todo app. No public video link is available.*
+*105-second archived Fleet demonstration, ending with a generated 3D todo app. Personal workspace details are redacted.*
 
 ## Requirements
 
