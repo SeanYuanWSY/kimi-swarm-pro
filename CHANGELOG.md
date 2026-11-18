@@ -5,10 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
-- Reorganize the README around setup, mode selection, examples, and installation side effects.
-- Add an original logo and modern dark node-graph overview artwork, and embed the full archived Fleet demo as a native GitHub video attachment instead of a static preview.
-- Keep private AI plans, session files, and raw recordings outside the public source tree.
-- Document contribution boundaries for humans and AI assistants, plus synchronized release version files.
+- Shorten the README into install, use, demo, and examples.
+- Move contributing, security, and conduct docs into `.github/`, where GitHub still detects them.
+- Remove `VERSION`, `AUTHORS.md`, and the unused demo screenshot. `package.json` is the version source.
+- Keep private plans, session files, and raw recordings out of the public tree.
 - Use the existing Node syntax check for `npm run lint:js` and preserve its failure status.
 - Update the security policy version table and private reporting guidance.
 

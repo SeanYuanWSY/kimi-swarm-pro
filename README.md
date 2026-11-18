@@ -1,51 +1,18 @@
-<div align="center">
+# kimi-swarm-pro
+
+<p align="center">
   <img src="docs/assets/logo.png" alt="kimi-swarm-pro logo" width="72">
-  <h1>kimi-swarm-pro</h1>
-  <p>
-    Multi-model collaboration for <a href="https://github.com/MoonshotAI/kimi-code">Kimi Code CLI</a> — installs the <code>kimi-fleet</code> skill.<br>
-    双模式：<code>/swarm</code> 走原生轻量蜂群，<code>/fleet</code> 走完整交互式多模型配置。
-  </p>
-</div>
+</p>
+
+A skill for [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code). `/swarm` leaves the work to the CLI. `/fleet` stops and lets you choose the models.
+
+> `/swarm` 走原生蜂群，`/fleet` 自己选模型和角色。
 
 <p align="center">
   <a href="docs/assets/overview.webp">
-    <img src="docs/assets/overview.webp" alt="Two modes — /swarm auto-orchestrates subagents; /fleet picks models, roles, and limits. Open the diagram to view it full size." width="800">
+    <img src="docs/assets/overview.webp" alt="One task can go through Swarm, which splits it automatically, or Fleet, which asks for models and roles." width="800">
   </a>
 </p>
-
-## Choose a Mode
-
-| Command | Choose it for |
-|---|---|
-| `/swarm [task]` | Automatic orchestration by the CLI. |
-| `/fleet [task]` | Model selection, role assignment, and provider limits. |
-
-A natural-language multi-role prompt (e.g. `前端模型负责UI，后端模型负责API`) also triggers the `/fleet` flow without the slash command — see [How the Hook Works](#how-the-hook-works).
-
-## Demo
-
-https://github.com/user-attachments/assets/61a58696-9cf0-4a22-a7c2-1f12eae1df9b
-
-*105-second archived Fleet demonstration, ending with a generated 3D todo app. Personal workspace details are redacted.*
-
-## Requirements
-
-| Dependency | Why |
-|---|---|
-| `git` | Clone this repo |
-| [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code) | The host CLI — see compatibility note below |
-| `node` ≥ 18 | Runs `kimi-fleet-hook.js` (standard library only) |
-| `python3` | Hook parses `config.toml`; install/uninstall edit it safely |
-| ≥ 2 configured models | Required for `/fleet`; they come from **your** `~/.kimi-code/config.toml` |
-
-**Python:** 3.11+ recommended. The hook itself can fall back to `tomli` on older Pythons; if no TOML parse succeeds at all, it still injects the override but without the pre-parsed model list, and tells the agent to read `config.toml` itself. The subagent API-calling examples in the skill use stdlib `tomllib` directly and need 3.11+.
-
-**CLI compatibility:** this integration was originally built against Kimi Code 0.20-era APIs (native Swarm Mode, `AgentSwarm`, `UserPromptSubmit` hooks, `skills-curated`). Compatibility with the current CLI is not verified. `/swarm` relies entirely on the CLI's built-in implementation.
-
-**Runtime-only extras** (used by fleet subagents, not by the installer):
-
-- `curl` + `python3` — for subagents that call API-based providers.
-- `ollama` + `perl` — for subagents assigned `ollama-cloud/…` models (perl `alarm` is the portable timeout on Linux and macOS).
 
 ## Install
 
@@ -55,77 +22,62 @@ cd kimi-swarm-pro
 ./install.sh
 ```
 
-Then start a new Kimi Code session. Review the script first if you like — it is short.
+You need git, Node 18 or newer, Python 3, and Kimi Code with at least two models in `~/.kimi-code/config.toml`. Python 3.11 or newer is the comfortable setup. The hook can use `tomli` on an older Python, but the API examples in the skill use `tomllib` and need 3.11.
 
-### What the installer changes
+This was written for Kimi Code around version 0.20. It has not been checked against newer CLI releases. `/swarm` is entirely the CLI's own command.
 
-| Installed path | Role | Overwrite / backup behavior |
-|---|---|---|
-| `~/.agents/skills/kimi-fleet/SKILL.md` | The skill: role prompts, the fleet flow, model-calling recipes | Overwritten in place; no backup |
-| `~/.kimi-code/scripts/kimi-fleet-hook.js` | Fallback interceptor for multi-role natural language | Overwritten in place; no backup |
-| `~/.kimi-code/skills-curated/kimi-fleet` | Symlink to the skill dir; makes the CLI load the skill | **Refuses to proceed** if a real (non-symlink) file or directory occupies the path |
-| `~/.kimi-code/config.toml` | A `[[hooks]]` entry registers the hook on `UserPromptSubmit` | Appended only if not already registered; backed up to `config.toml.kimi-fleet.bak.<timestamp>` before modification |
+After it finishes, start a new Kimi Code session.
 
-The install script is the supported path — no manual TOML or symlink steps are documented.
+The script replaces these files if they already exist, and it does not keep the old copies:
 
-## Usage
+- `~/.agents/skills/kimi-fleet/SKILL.md`
+- `~/.kimi-code/scripts/kimi-fleet-hook.js`
 
-### `/swarm` — native mode
+It also links `~/.kimi-code/skills-curated/kimi-fleet` to the skill. If that path is already a normal file or directory, the script stops. It adds one hook to `~/.kimi-code/config.toml`, after saving `config.toml.kimi-fleet.bak.<timestamp>`.
 
-```
+A fleet that calls an API provider needs `curl` as well. The Ollama examples in the skill also need `ollama` and `perl`.
+
+## Use
+
+```text
 /swarm 设计一个登录页面
 ```
 
-Not intercepted, not configured. The CLI's own Swarm Mode handles decomposition, subagents, and synthesis.
+The CLI splits this itself. The hook does not step in.
 
-### `/fleet` — interactive mode
-
-```
-/fleet 设计一个登录页面，前端模型负责UI，后端模型负责API，审查模型负责检查
+```text
+/fleet 设计一个登录页面，前端模型负责UI，后端模型负责API
 ```
 
-The skill walks you through the interactive flow. Everything it shows — providers, models, counts — must come from your `config.toml` (pre-parsed and injected by the hook, or parsed by the agent as a fallback); the skill is designed to offer only models that actually exist in your config.
-
-### Multi-role natural language (no slash command)
-
-```
-前端模型负责UI组件，后端模型负责API设计，安全模型负责审查JWT
-```
-
-The hook intercepts prompts like this and injects an override that forces the same interactive flow.
-
-### How the Hook Works
-
-`hooks/kimi-fleet-hook.js` runs on `UserPromptSubmit`:
-
-1. If the prompt starts with `/swarm` or `/fleet` (any case), it exits silently — **slash commands always pass through**.
-2. Otherwise it checks for multi-role patterns. This is a **conservative pattern match, not full NLP**: it only fires on specific role-assignment phrasing — e.g. `前端模型负责…`, `模型负责`, `审查模型`, or English `frontend model` / `backend model` / `model for frontend`. Plain prompts, and prompts that merely *mention* a model, pass through.
-3. On a match it parses `config.toml` via `python3` and injects the complete provider/model list plus the fleet instruction, so the agent enters the same flow `/fleet` would start.
-
-## Uninstall
+You pick the providers, models, and roles. The same questions start if you write something like `前端模型负责UI，后端模型负责API` without the slash command. A normal sentence that only mentions a model does not.
 
 ```bash
 ./uninstall.sh
 ```
 
-Removes the symlink, the skill directory, the hook script, and the `[[hooks]]` registration block. Config backups (`config.toml.kimi-fleet.bak.*`) are left in place — delete them yourself if you don't want them.
+This removes the skill, the link, the hook, and the hook entry. Backup copies of `config.toml` stay where they are.
+
+## Demo
+
+https://github.com/user-attachments/assets/61a58696-9cf0-4a22-a7c2-1f12eae1df9b
+
+The recording is 105 seconds and ends on a generated 3D todo app. Names and local paths are covered. It shows an older session, not a test of the CLI you have now.
 
 ## Examples
 
-Full walkthroughs with the expected questions at each step:
+- [A login page split across frontend, backend, and review](examples/example-frontend-backend.md)
+- [Research split across three topics, then combined](examples/example-research.md)
 
-- [Frontend + Backend + Review](./examples/example-frontend-backend.md) — three-model login page
-- [Multi-dimensional Research](./examples/example-research.md) — four-model research fleet
+## In this repo
 
-## Maintenance
+| Path | What it is |
+|---|---|
+| `install.sh`, `uninstall.sh` | Setup and removal |
+| `skills/kimi-fleet/` | The skill |
+| `hooks/kimi-fleet-hook.js` | The prompt hook |
+| `examples/` | The two walkthroughs |
+| `docs/assets/` | Logo and diagram |
 
-```bash
-node --check hooks/kimi-fleet-hook.js   # hook syntax check
-shellcheck install.sh uninstall.sh      # optional, same as CI
-```
+Changes and checks are in [Contributing](.github/CONTRIBUTING.md). Report a security problem through the [security policy](.github/SECURITY.md), not in a public issue.
 
-Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) for the rules (issues first, no personal paths in docs, backup-before-edit). Security reports: [SECURITY.md](./SECURITY.md).
-
-## License
-
-MIT © [SeanYuanWSY](https://github.com/SeanYuanWSY)
+MIT. Maintainer: [SeanYuanWSY](https://github.com/SeanYuanWSY).

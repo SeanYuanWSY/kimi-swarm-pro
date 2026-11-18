@@ -15,12 +15,12 @@ Examples of behavior that contributes to a positive environment:
 Examples of unacceptable behavior:
 
 - The use of sexualized language or imagery
-- Trolling, insulting/derogatory comments, and personal or political attacks
+- Trolling, insulting or derogatory comments, and personal or political attacks
 - Public or private harassment
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by opening a private GitHub issue mentioning `@SeanYuanWSY` or via [GitHub Security Advisories](https://github.com/SeanYuanWSY/kimi-swarm-pro/security/advisories/new). All complaints will be reviewed and investigated promptly and fairly.
+Report abusive or harassing behavior through [GitHub Security Advisories](https://github.com/SeanYuanWSY/kimi-swarm-pro/security/advisories/new). Complaints are reviewed.
 
 ## Attribution
 
