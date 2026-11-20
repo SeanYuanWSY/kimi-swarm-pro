@@ -5,7 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
-- Shorten the README into install, use, demo, and examples.
+- Keep the README focused on identity, install, use, and one preview; move the complete walkthrough and project explanation into `docs/README.md`.
+- Collect walkthroughs and the changelog under `docs/` while leaving GitHub community files, runtime sources, and installation scripts in place.
 - Move contributing, security, and conduct docs into `.github/`, where GitHub still detects them.
 - Remove `VERSION`, `AUTHORS.md`, and the unused demo screenshot. `package.json` is the version source.
 - Keep private plans, session files, and raw recordings out of the public tree.

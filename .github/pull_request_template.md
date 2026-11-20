@@ -18,5 +18,5 @@ Brief description of the change.
 
 ## Checklist
 
-- [ ] Updated `CHANGELOG.md` if behavior changed
+- [ ] Updated `docs/CHANGELOG.md` if behavior changed
 - [ ] Updated `README.md` if user-facing steps changed

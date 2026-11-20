@@ -110,7 +110,7 @@ Apply provider concurrency limits within the current stage:
 
 For example, three ready Ollama items with a limit of two and one unlimited DeepSeek item run as two Ollama items plus DeepSeek, followed by the remaining Ollama item. A dependent review still runs after both waves.
 
-See the repository walkthroughs for [frontend/backend/review](https://github.com/SeanYuanWSY/kimi-swarm-pro/blob/main/examples/example-frontend-backend.md) and [research/synthesis](https://github.com/SeanYuanWSY/kimi-swarm-pro/blob/main/examples/example-research.md).
+See the repository walkthroughs for [frontend/backend/review](https://github.com/SeanYuanWSY/kimi-swarm-pro/blob/main/docs/examples/example-frontend-backend.md) and [research/synthesis](https://github.com/SeanYuanWSY/kimi-swarm-pro/blob/main/docs/examples/example-research.md).
 
 ### Step 7: Run AgentSwarm
 
