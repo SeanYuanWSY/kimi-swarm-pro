@@ -4,87 +4,44 @@
 "use strict";
 
 /**
- * Kimi Code UserPromptSubmit hook — kimi-fleet interceptor.
- *
- * /fleet is now handled by the kimi-fleet skill command. This hook only
- * intercepts natural-language multi-role prompts (e.g. "前端模型负责X")
- * as a fallback, so the user can trigger the fleet flow without typing /fleet.
- *
- * /swarm is left untouched so the user gets native Kimi Swarm Mode behavior.
- * Both /swarm and /fleet slash commands short-circuit before the multi-role
- * pattern check — they handle themselves and must never be hijacked.
- *
- * Registered in ~/.kimi-code/config.toml under [[hooks]].
- *
- * BUGFIX: Previously the FLEET_INSTRUCTION had a hardcoded provider list that
- * missed providers like `claudecn` and `opencode-go`. Now the hook dynamically
- * parses ~/.kimi-code/config.toml via Python tomllib and injects the COMPLETE
- * provider/model list into the instruction, so the LLM never has to parse TOML
- * itself or guess which providers exist.
+ * Intercept natural-language multi-role prompts and start the kimi-fleet flow.
+ * Explicit /swarm and /fleet commands handle themselves.
  */
 
 const fs = require("fs");
 const { execSync } = require("child_process");
 
-// --- Trigger detection ---
-
-/** Detect multi-role language patterns that suggest the user wants multi-model collaboration */
 function isMultiRolePrompt(prompt) {
-  // CJK patterns: do NOT use \b because word boundaries are undefined around CJK characters.
+  // Word boundaries are unreliable around CJK text.
   const cjkRoles = /(前端模型|后端模型|审查模型|安全模型|性能模型|审美模型|研究模型)/iu;
   const cjkAssign = /(模型负责|模型做|模型来处理|模型承担)/iu;
 
-  // ASCII patterns: word boundaries are safe here.
-  // NOTE: "review" and "research" are removed from English patterns because they are
-  // common English words that frequently appear before "model" in non-fleet contexts
-  // (e.g. "review model performance", "research model architecture"). Keeping them
-  // caused false-positive interception. frontend/backend/cheap-task are fleet-specific
-  // role names with very low false-positive rates. CJK equivalents (审查模型/研究模型)
-  // remain in cjkRoles because they are unambiguous in Chinese.
+  // Generic English words such as "review" and "research" cause false positives.
   const engRoles = /\b(cheap[\s\-_]?task|frontend|backend)\s+model(s)?\b/iu;
   const engAssign = /\bmodel(s)?\s+for\s+(frontend|backend|cheap[\s\-_]?task)\b/iu;
 
   return cjkRoles.test(prompt) || cjkAssign.test(prompt) || engRoles.test(prompt) || engAssign.test(prompt);
 }
 
-/** Detect if the user explicitly wants the full interactive configuration flow */
 function shouldIntercept(prompt) {
-  // Explicit slash commands handle themselves and must NOT be intercepted.
-  //   /swarm  → native Swarm Mode (pass through)
-  //   /fleet  → skill system (loads SKILL.md directly)
-  // Without this guard, "/swarm 前端模型负责UI" gets hijacked into the fleet
-  // flow because the multi-role pattern matches — that's a bug.
-  // Case-insensitive so /SWARM, /Fleet, etc. also pass through.
-  const slashCmd = /^\s*\/(swarm|fleet)\b/iu;
-  if (slashCmd.test(prompt)) {
-    return false;
-  }
+  if (/^\s*\/(swarm|fleet)\b/iu.test(prompt)) return false;
   return isMultiRolePrompt(prompt);
 }
 
-// --- Config parsing ---
-
-/**
- * Parse ~/.kimi-code/config.toml via Python tomllib and return a structured
- * object: { providers: [...], models_by_provider: { provider: [{model_id, display_name, ...}] } }
- *
- * Falls back to null on any error (Python missing, TOML parse failure, etc.).
- * The caller should handle null by injecting a fallback instruction that tells
- * the agent to read config.toml manually.
- */
 function parseModelsFromConfig() {
   const pyScript = `
 try:
     import tomllib  # Python 3.11+
 except ImportError:
-    import tomli as tomllib  # Python <3.11 fallback
+    import tomli as tomllib
 import json, os, sys
 path = os.path.expanduser("~/.kimi-code/config.toml")
 if not os.path.exists(path):
     print(json.dumps({"error": "config.toml not found"}))
     sys.exit(0)
 try:
-    cfg = tomllib.load(open(path, "rb"))
+    with open(path, "rb") as f:
+        cfg = tomllib.load(f)
 except Exception as e:
     print(json.dumps({"error": f"config.toml parse error: {e}"}))
     sys.exit(0)
@@ -93,23 +50,27 @@ providers_cfg = cfg.get("providers", {})
 provider_names = sorted(providers_cfg.keys())
 by_provider = {}
 for model_id, info in models.items():
-    p = info.get("provider", "unknown")
+    provider = info.get("provider", "unknown")
     entry = {
         "model_id": model_id,
         "display_name": info.get("display_name", model_id),
         "model": info.get("model", model_id),
         "capabilities": info.get("capabilities", []),
     }
-    by_provider.setdefault(p, []).append(entry)
-for p in by_provider:
-    by_provider[p].sort(key=lambda m: m["model_id"])
-print(json.dumps({"providers": provider_names, "models_by_provider": by_provider}, indent=2, ensure_ascii=False))
+    by_provider.setdefault(provider, []).append(entry)
+for provider in by_provider:
+    by_provider[provider].sort(key=lambda model: model["model_id"])
+print(json.dumps({
+    "providers": provider_names,
+    "models_by_provider": by_provider,
+}, indent=2, ensure_ascii=False))
 `;
+
   try {
     const result = execSync(`python3 -c '${pyScript.replace(/'/g, "'\\''")}'`, {
       encoding: "utf8",
       timeout: 5000,
-      maxBuffer: 10 * 1024 * 1024, // 10MB — default 1MB is too small for large configs
+      maxBuffer: 10 * 1024 * 1024,
     });
     return JSON.parse(result);
   } catch {
@@ -117,83 +78,60 @@ print(json.dumps({"providers": provider_names, "models_by_provider": by_provider
   }
 }
 
-/** Format the parsed config into a human-readable model list for injection */
 function formatModelList(parsed) {
-  if (!parsed || parsed.error) {
-    return null;
-  }
-  const lines = [];
+  if (!parsed || parsed.error) return null;
+
   const providers = parsed.providers || [];
   const byProvider = parsed.models_by_provider || {};
+  const orphanProviders = Object.keys(byProvider).filter((provider) => !providers.includes(provider));
+  const allProviders = [...providers, ...orphanProviders]
+    .filter((provider) => (byProvider[provider] || []).length > 0);
+  const totalModels = Object.values(byProvider).reduce((sum, models) => sum + models.length, 0);
+  const lines = [
+    `=== Providers (${allProviders.length}) ===`,
+  ];
 
-  // Total model count for integrity check
-  let totalModels = 0;
-  for (const p of Object.keys(byProvider)) totalModels += byProvider[p].length;
-
-  // Providers whose models exist but who are missing from the [providers.*] table
-  // (e.g. a typo'd provider field in [models."..."]). These MUST still be shown as
-  // selectable options in Step 2 — omitting them here is exactly TOP BUG #3.
-  const orphanProviderNames = Object.keys(byProvider).filter((p) => !providers.includes(p));
-  const allProviderNames = [...providers, ...orphanProviderNames];
-
-  lines.push(`=== Available Providers (${allProviderNames.length}) ===`);
-  for (const p of allProviderNames) {
-    const count = (byProvider[p] || []).length;
-    const tag = orphanProviderNames.includes(p) ? " [not in [providers.*] table, but has models — still show it]" : "";
-    lines.push(`  - ${p} (${count} models)${tag}`);
+  for (const provider of allProviders) {
+    const count = (byProvider[provider] || []).length;
+    const orphanTag = orphanProviders.includes(provider) ? " [not declared in providers.*]" : "";
+    lines.push(`- ${provider} (${count} models)${orphanTag}`);
   }
-  lines.push("");
-  lines.push(`=== Models by Provider (TOTAL: ${totalModels} models — this is the EXHAUSTIVE list) ===`);
-  lines.push("");
-  lines.push("⚠️ STRICT CONSTRAINT: The list below is the COMPLETE and ONLY source of truth for model selection.");
-  lines.push("  - Do NOT add any model that is not listed here.");
-  lines.push("  - Do NOT 'supplement', 'guess', or 'fill in' models from memory or training data.");
-  lines.push("  - Do NOT list models from previous sessions, backups, or other config files.");
-  lines.push("  - If a provider shows '2 models', there are exactly 2 — not 3, not 6, not 7.");
-  lines.push("  - The number in parentheses (e.g. '2 models') is the exact count you must present.");
 
-  // Count display_name occurrences across ALL providers so duplicates (e.g. two
-  // different providers both offering a model called "GLM-5.2") can be flagged.
-  // Without this, Step 4's "这个模型 [display_name] 担任什么角色？" prompt would be
-  // ambiguous between two different model_ids that share the same display_name.
+  lines.push(
+    "",
+    `=== Models (${totalModels} total; exhaustive) ===`,
+    "Use only the model IDs below. Never add remembered, renamed, or otherwise unlisted models.",
+    "Counts are exact. Include every listed model, regardless of capabilities."
+  );
+
   const displayNameCounts = {};
-  for (const p of allProviderNames) {
-    for (const m of byProvider[p] || []) {
-      displayNameCounts[m.display_name] = (displayNameCounts[m.display_name] || 0) + 1;
+  for (const provider of allProviders) {
+    for (const model of byProvider[provider] || []) {
+      displayNameCounts[model.display_name] = (displayNameCounts[model.display_name] || 0) + 1;
     }
   }
 
-  for (const p of allProviderNames) {
-    const models = byProvider[p] || [];
+  for (const provider of allProviders) {
+    const models = byProvider[provider] || [];
     if (models.length === 0) continue;
-    lines.push("");
-    lines.push(`--- ${p} (${models.length} models — EXACT count, do NOT exceed) ---`);
-    for (const m of models) {
-      const caps = (m.capabilities || []).join(", ") || "none";
-      const dupTag = displayNameCounts[m.display_name] > 1 ? "  ⚠️ DUPLICATE display_name — always disambiguate with provider/model_id" : "";
-      lines.push(`  ${m.display_name}  [model_id: ${m.model_id}]  [capabilities: ${caps}]${dupTag}`);
+    lines.push("", `--- ${provider} (${models.length} models) ---`);
+    for (const model of models) {
+      const capabilities = (model.capabilities || []).join(", ") || "none";
+      const duplicateTag = displayNameCounts[model.display_name] > 1 ? " [duplicate display name]" : "";
+      lines.push(`- ${model.display_name} [model_id: ${model.model_id}] [capabilities: ${capabilities}]${duplicateTag}`);
     }
   }
 
-  lines.push("");
-  lines.push(`=== END OF MODEL LIST (TOTAL: ${totalModels} models) ===`);
-  lines.push("⚠️ REMINDER: You may ONLY present the models listed above. Any model not in this list does NOT exist.");
-  const dupNames = Object.keys(displayNameCounts).filter((n) => displayNameCounts[n] > 1);
-  if (dupNames.length > 0) {
-    lines.push(`⚠️ DUPLICATE DISPLAY NAMES DETECTED: ${dupNames.join(", ")} — each appears under more than one provider/model_id. When presenting options or asking role questions (Step 4), ALWAYS show "display_name (provider)" together, never display_name alone, or the user cannot tell which model is being referenced.`);
-  }
-
+  lines.push("", `=== End of model list (${totalModels} models) ===`);
   return lines.join("\n");
 }
-
-// --- Payload reading (same pattern as supermemory-recall.js) ---
 
 function readPayload() {
   try {
     const raw = fs.readFileSync(0, "utf8");
     return raw.trim() ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error("kimi-fleet-hook.js: parse error:", err.message);
+  } catch (error) {
+    console.error("kimi-fleet-hook.js: parse error:", error.message);
     return {};
   }
 }
@@ -213,26 +151,17 @@ function valueToText(value) {
 
 function extractPrompt(payload) {
   return valueToText(
-    payload.prompt ||
-      payload.user_prompt ||
-      payload.input ||
-      payload.message ||
-      payload.query ||
-      payload
+    payload.prompt || payload.user_prompt || payload.input || payload.message || payload.query || payload
   ).trim();
 }
 
-// --- Output ---
-
 function exitWithContext(additionalContext) {
-  process.stdout.write(
-    JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "UserPromptSubmit",
-        additionalContext,
-      },
-    })
-  );
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "UserPromptSubmit",
+      additionalContext,
+    },
+  }));
   process.exit(0);
 }
 
@@ -241,106 +170,52 @@ function exitSilent() {
   process.exit(0);
 }
 
-// --- Instruction builder ---
-
 function buildFleetInstruction() {
-  const parsed = parseModelsFromConfig();
-  const modelList = formatModelList(parsed);
+  const modelList = formatModelList(parseModelsFromConfig());
+  const modelSource = modelList
+    ? `### Complete model list (injected by hook)\n\n${modelList}\n\nDo not re-read config.toml when this list is available.`
+    : `### Model list unavailable\n\nRead ~/.kimi-code/config.toml and parse every [models."..."] entry. Do not filter by capabilities or add unlisted models.`;
 
-  const modelListSection = modelList
-    ? `### COMPLETE Model List (injected by hook — DO NOT re-read config.toml)\n\n${modelList}\n\n### ⚠️ MODEL LIST INTEGRITY RULES\n\n1. The list above is the **ONLY** source of truth. You may ONLY show these exact models in AskUserQuestion.\n2. **NEVER add models from memory, training data, previous sessions, backups, or guesswork.** If a model is not in the list above, it does NOT exist and must NOT be offered.\n3. The count in parentheses (e.g. "2 models") is **EXACT**. If \`tohoqing-gemini\` says "2 models", you show exactly 2 — not 3, not 6, not 7.\n4. Do NOT "supplement" or "fill in" models you think might exist. The config has been curated and cleaned — removed models are intentionally absent.\n5. Before each AskUserQuestion call, verify every model_id you are about to present exists in the injected list above. If any model_id does not match, REMOVE it. Also verify the count matches the number in the list — if the count doesn't match, you made an error — re-check.`
-    : `### Model List\n\nCould not auto-parse config.toml. You MUST read ~/.kimi-code/config.toml yourself and parse EVERY [models."..."] entry. Do NOT filter by capabilities. Do NOT add models from memory.`;
+  return `[KIMI-FLEET INTERCEPT]
 
-  return `[KIMI-FLEET INTERCEPT — CRITICAL OVERRIDE]
+This is a multi-role task. Do not launch AgentSwarm or start subagents yet. Read ~/.agents/skills/kimi-fleet/SKILL.md and follow its complete Fleet workflow and model-calling templates.
 
-The user described a task with multiple model roles (e.g. "前端模型负责X"), which means they want the FULL interactive multi-model configuration flow.
+### Required interaction
 
-**You MUST NOT auto-launch AgentSwarm or start any subagents yet.**
+1. Confirm the task. In plan mode, ask the user to leave plan mode first.
+2. Ask which providers to browse, then show every model from those providers.
+3. Let the user select models, then ask for each model's role and optional custom instruction.
+4. Ask about optional per-provider concurrency limits.
+5. Run the skill's pre-flight check for every selected non-default model and apply the user's removal or fallback choice.
+6. Build and run AgentSwarm items only after the selections are complete.
+7. Verify all expected reports and synthesize them, explicitly identifying missing or partial results.
 
-**Before doing ANY work, you MUST follow these steps IN ORDER:**
+Use AskUserQuestion for the choices. Retain earlier selections across batches. If fewer than two models are available, follow the reduced-fleet choice in the skill.
 
-### Step 1: Confirm the task
-Restate the task in one sentence. Ask the user via AskUserQuestion:
-"我要为以下任务启动多模型协作：[task]。是否继续？"
-Options: "继续，让我选模型" / "不用多模型，直接做"
+### Model and provider rules
 
-${modelListSection}
+- The list below (or the config parse in fallback mode) is the only source of truth. Never offer an unlisted model ID.
+- Offer every provider with at least one model, including providers missing from providers.*. Omit zero-model providers.
+- AskUserQuestion supports four questions with four options each per call. Use as many calls as needed for all providers and models; never stop after the first four or sixteen.
+- Use multi_select for provider and model questions. Do not treat an empty batch as a request to skip later batches.
+- Label models as display_name (provider), with model_id and capabilities in the description. Always include the provider when display names collide.
+- Split role choices across questions so every role in the skill remains available. Custom roles and instructions are allowed; custom unlisted model IDs are not.
 
-### Step 2: Ask which providers to browse (multi_select)
-Use AskUserQuestion with multi_select=true. Create **one option per individual provider** listed above (NOT per "group" — never combine multiple providers into one option like "Claude系" or "DeepSeek系"). Since AskUserQuestion allows max 4 options per question, split into multiple questions if there are more than 4 providers. The user CAN select multiple providers at once.
+### Build and launch rules
 
-**CRITICAL — TOP BUG #3 (MISSING PROVIDERS)**: Just like truncating the model list is the #1 bug, **silently omitting or grouping providers** is the #3 bug. If the list above has 8 providers, ALL 8 must appear as options — do not group them, do not filter out "uninteresting" ones, do not skip \`managed:kimi-code\`, \`tohoqing-gpt\`, or any provider with few models. The user decides which to browse; you do not pre-filter. If there are 5+ providers, split into two questions in the same call (providers 1-4, providers 5-N), both with multi_select=true.
+Follow the skill's dependency and batching sections. Independent items may share a call. An item that needs another item's output must wait, and its eventual task text must embed the complete upstream outputs labeled by model and role. Provider concurrency limits batch work within a dependency stage; they never move dependent work into an earlier stage.
 
-### Step 3: Show models from selected providers (multi_select)
-Pool ALL models from the selected provider(s) shown above. Count the total N. You need ceil(N/16) AskUserQuestion calls (each call = 4 questions × 4 options = 16 models). Label each option: "display_name (provider)" with model_id and capabilities in description — **always include the provider name in the label**, since two models from different providers can share the same display_name (e.g. "GLM-5.2" may exist under both \`ollama-cloud\` and \`zai-coding-plan\`). Use multi_select=true on every question.
+Use the full default role prompt when the user chooses the default, not a placeholder. Use custom instructions verbatim. Never launch a dependent item on missing or empty upstream input.
 
-**CRITICAL — TOP BUG #1 (TRUNCATION)**: Showing only 4 models and stopping as if that's the entire list. AskUserQuestion allows 4 questions × 4 options = 16 options PER CALL, and you can make MULTIPLE calls. If a provider has 40 models, that is 3 calls — do ALL of them. Tell the user which batch they are on: "模型选择 (第 1/3 批，共 40 个)". Do NOT stop until every model from every selected provider has been shown.
-
-**CRITICAL — TOP BUG #2 (GHOST MODELS)**: The #2 fleet bug is showing models that do NOT exist in the injected list — "ghost models" from memory, training data, or previous sessions. For example, if \`tohoqing-gemini\` shows "2 models" in the list, you must show EXACTLY those 2 models. Do NOT add \`gemini-2.5-flash\`, \`gemini-2.5-pro\`, \`gemini-3-flash\`, \`gemini-3-pro-preview\`, or any other model not in the list. **Before each AskUserQuestion call, verify every model_id you are about to present exists in the injected list above. If it does not, REMOVE it.**
-
-### Step 4: For each selected model, ask role + custom instruction
-For each model, use AskUserQuestion:
-Question 1 (role): "这个模型 [display_name] 担任什么角色？"
-Options: "frontend（前端）" / "backend（后端）" / "review（审查）" / "research（研究）"
-(Ask a second question with: "cheap-task（省token）" / "synthesize（综合）" if needed)
-Question 2 (instruction): "对 [display_name] 有什么具体指令？"
-Options: "使用角色默认指令（推荐）" / "简洁省token" / "深入详细分析"
-The user can also select "Other" to type custom instructions.
-**If two selected models share the same display_name (see DUPLICATE DISPLAY NAMES DETECTED in the model list), always phrase questions as "这个模型 [display_name] (provider) 担任什么角色？" to disambiguate.**
-
-### Step 5: Ask about concurrency limits (optional but important)
-Some providers (especially Ollama Cloud) have concurrent request limits per subscription tier.
-If the user selected more models from one provider than the limit allows, only some will run while others queue — wasting time.
-Ask via AskUserQuestion: "是否需要为某些 provider 设置最大并发数？"
-Options: "不设置，全部并行（推荐）" / "设置并发限制"
-If the user chooses to set limits, for each provider with selected models, ask:
-"[provider] 的最大并发数？（当前选了 N 个该 provider 的模型）"
-Options: "1（串行）" / "2" / "3" / Other to type a custom number.
-Record limits as provider → max_concurrency mapping.
-
-### Step 6: Build AgentSwarm Items (dependency stages first, then provider batching)
-Create items only for the stage currently ready to launch — one item per selected model in that stage; build dependent items later, once the upstream results they embed have returned. Do NOT use any delimiter-separated format — the subagent reads the item directly, no parsing. Render each item as a plain readable sentence:
-  "Your model is {model_id}. Your role is {role}. Your instruction is: {custom_instruction_or_default}. Your task is: {task_description}."
-The instruction field MUST contain the full instruction text, not just the role name:
-- If the user chose "使用角色默认指令", copy the full default prompt for that role from the Role System Prompts section in ~/.agents/skills/kimi-fleet/SKILL.md.
-- If the user provided a custom instruction, use that text verbatim.
-Stage items by real data dependency BEFORE any provider batching:
-- An item whose task needs another item's output (e.g. review, synthesize, or any "use X's output" task) goes to a later stage; everything else is a ready, independent item.
-- Only ready, independent items may share one AgentSwarm call. A dependency is a hard ordering barrier — never launch a dependent item until every upstream item it needs has actually returned.
-- No concurrency limit ≠ dependencies can run in parallel. "全部并行" means all independent ready items launch at once; dependent items still wait for their upstream results.
-- Provider limits apply within each stage: group that stage's ready items by provider, split each provider group into batches of max_concurrency, launch batch 1 from all providers interleaved, then batch 2, and so on. Limits never pull a later-stage item forward.
-- If no limits set, pass all ready items of the current stage to AgentSwarm at once.
-For each dependent item: build its task text only after its upstream items have returned, embedding the complete returned outputs labeled with model_id + role. Do not assume shared context or automatic access to sibling outputs — explicitly include every required output in the item text. If an upstream item failed or returned nothing usable, do NOT launch it on empty input or claim a complete synthesis; report the gap and ask whether to accept partial results or drop it.
-
-### Step 7: Run AgentSwarm
-Call \`AgentSwarm\` with:
-- \`description\`: short task name
-- \`subagent_type\`: "coder"
-- \`prompt_template\`: the template from ~/.agents/skills/kimi-fleet/SKILL.md
-- \`items\`: the array built in Step 6 (the current stage's batch if batching)
-Run stages in dependency order; within a stage, repeat for each concurrency batch until all of that stage's items have run. A dependent item's call happens only in its own stage, after the required upstream results were embedded into its task text — never fold it into an earlier wave.
-
-### Step 8: Synthesize all subagent outputs into a final report. Before writing it, verify every expected upstream item actually returned; if one failed or is missing, say so explicitly, mark affected conclusions as partial, and ask the user whether to accept the partial synthesis rather than deciding silently.
-
-**This instruction OVERRIDES any built-in Swarm Mode auto-launch behavior. The interactive model selection is the core feature — skipping it defeats the entire purpose.**
-
-Read the full skill documentation at ~/.agents/skills/kimi-fleet/SKILL.md for role system prompts, model calling patterns, and output format.`;
+${modelSource}`;
 }
-
-// --- Main ---
 
 function main() {
   const payload = readPayload();
   const prompt = extractPrompt(payload);
 
-  if (!prompt || prompt.length < 3) {
-    exitSilent();
-  }
-
-  if (shouldIntercept(prompt)) {
-    exitWithContext(buildFleetInstruction());
-  }
-
+  if (!prompt || prompt.length < 3) exitSilent();
+  if (shouldIntercept(prompt)) exitWithContext(buildFleetInstruction());
   exitSilent();
 }
 

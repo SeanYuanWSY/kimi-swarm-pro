@@ -42,7 +42,7 @@ else
   # tomllib (used by the hook to parse config.toml) requires Python 3.11+
   PY_VERSION=$(python3 -c 'import sys; print(sys.version_info[0]*100+sys.version_info[1])' 2>/dev/null || echo "0")
   if [ "$PY_VERSION" -lt 311 ]; then
-    warn "python3 found but version is < 3.11; the hook requires tomllib (Python 3.11+). Hook will fall back to manual config parsing."
+    warn "python3 is older than 3.11; install tomli or the agent must parse config.toml manually"
   fi
 fi
 
