@@ -64,9 +64,25 @@ This removes the installed skill, link, hook, and hook registration. Configurati
 
 ## Demo
 
-https://github.com/user-attachments/assets/61a58696-9cf0-4a22-a7c2-1f12eae1df9b
+**1. Confirm the task and choose providers**
 
-A 105-second Fleet recording that ends with a generated 3D todo app. It was recorded in an older Kimi Code session.
+Fleet reads your actual configuration before asking which providers to use.
+
+![Fleet task confirmation and provider selection](docs/assets/fleet-providers.png)
+
+**2. Assign models and roles**
+
+Each selected model gets a responsibility. The summary reports every model's role and completion status.
+
+![Fleet model roles and completion status](docs/assets/fleet-summary.png)
+
+**3. Inspect the result**
+
+The example ends with a working 3D todo app built by the fleet.
+
+![The generated 3D todo app](docs/assets/demo-preview.jpg)
+
+These screenshots come from a session recorded with Kimi Code around 0.20. Newer CLI interfaces may look different.
 
 ## Examples
 
@@ -80,7 +96,7 @@ A 105-second Fleet recording that ends with a generated 3D todo app. It was reco
 | `skills/kimi-fleet/` | Fleet skill and model-calling instructions |
 | `hooks/` | Natural-language prompt hook |
 | `examples/` | Two staged Fleet walkthroughs |
-| `docs/assets/` | Logo and overview image |
+| `docs/assets/` | Logo, overview, and demo screenshots |
 | `install.sh`, `uninstall.sh` | Setup and removal |
 
 See [Contributing](.github/CONTRIBUTING.md) for checks and development notes. For security reports, use the [security policy](.github/SECURITY.md) rather than a public issue.
